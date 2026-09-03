@@ -12,8 +12,6 @@
 #include <string>
 #include <format>
 
-// Estructuras de datos 
-
 struct ErrorDecodificacion {
     size_t offset;
     std::string mensaje;
@@ -21,11 +19,11 @@ struct ErrorDecodificacion {
 
 struct CodePointInfo {
     uint32_t valor;
-    int bytesUsados;  // 1, 2, 3 o 4 se usan para el resumen final 
+    int bytesUsados;  // 1, 2, 3 o 4,  usado para el resumen final 
 };
 
-// Lectura del texto a binario
 
+// Fase 1: Lectura del archivo en modo binario
 std::optional<std::vector<uint8_t>> leerArchivoBinario(const std::string& ruta) {
     std::ifstream archivo(ruta, std::ios::binary);
 
@@ -57,8 +55,8 @@ std::optional<std::vector<uint8_t>> leerArchivoBinario(const std::string& ruta) 
     return buffer;
 }
 
-// Detección de BOM 
 
+// Fase 2: Detección de BOM 
 size_t detectarInicioTrasBOM(const std::vector<uint8_t>& buffer) {
     if (buffer.size() >= 3 &&
         buffer[0] == 0xEF &&
@@ -73,6 +71,7 @@ size_t detectarInicioTrasBOM(const std::vector<uint8_t>& buffer) {
 bool esByteContinuacionValido(uint8_t b) {
     return (b & 0xC0) == 0x80;
 }
+
 
 // Fase 3: Decodificación 
 
@@ -107,12 +106,20 @@ void decodificarUTF8(const std::vector<uint8_t>& buffer,
             }
             uint32_t codePoint = (static_cast<uint32_t>(b1 & 0x1F) << 6) |
                                   (static_cast<uint32_t>(b2 & 0x3F));
+
+            // detección de codificación sobrelarga.
+            if (codePoint < 0x80) {
+                errores.push_back({offset, "Codificación sobrelarga (overlong encoding): el valor cabría en menos bytes."});
+                offset += 2;  // la secuencia sí es estructuralmente válida, se consume completa
+                continue;
+            }
+
             codePoints.push_back({codePoint, 2});
             offset += 2;
             continue;
         }
 
-        //  Caso 3: secuencia de 3 bytes (1110xxxx) 
+        // Caso 3: secuencia de 3 bytes (1110xxxx)
         if ((b1 & 0xF0) == 0xE0) {
             if (offset + 2 >= longitud) {
                 errores.push_back({offset, "Secuencia incompleta: se esperaban 2 bytes de continuación, EOF alcanzado."});
@@ -129,12 +136,20 @@ void decodificarUTF8(const std::vector<uint8_t>& buffer,
             uint32_t codePoint = (static_cast<uint32_t>(b1 & 0x0F) << 12) |
                                   (static_cast<uint32_t>(b2 & 0x3F) << 6) |
                                   (static_cast<uint32_t>(b3 & 0x3F));
+
+            // overlong encoding para secuencias de 3 bytes (mínimo válido: 0x800)
+            if (codePoint < 0x800) {
+                errores.push_back({offset, "Codificación sobrelarga (overlong encoding): el valor cabría en menos bytes."});
+                offset += 3;
+                continue;
+            }
+
             codePoints.push_back({codePoint, 3});
             offset += 3;
             continue;
         }
 
-        // Caso 4: secuencia de 4 bytes (11110xxx)
+        // Caso 4: secuencia de 4 bytes (11110xxx) 
         if ((b1 & 0xF8) == 0xF0) {
             if (offset + 3 >= longitud) {
                 errores.push_back({offset, "Secuencia incompleta: se esperaban 3 bytes de continuación, EOF alcanzado."});
@@ -153,6 +168,14 @@ void decodificarUTF8(const std::vector<uint8_t>& buffer,
                                   (static_cast<uint32_t>(b2 & 0x3F) << 12) |
                                   (static_cast<uint32_t>(b3 & 0x3F) << 6) |
                                   (static_cast<uint32_t>(b4 & 0x3F));
+
+            // Bono: overlong encoding para secuencias de 4 bytes (mínimo válido: 0x10000)
+            if (codePoint < 0x10000) {
+                errores.push_back({offset, "Codificación sobrelarga (overlong encoding): el valor cabría en menos bytes."});
+                offset += 4;
+                continue;
+            }
+
             codePoints.push_back({codePoint, 4});
             offset += 4;
             continue;
@@ -165,13 +188,14 @@ void decodificarUTF8(const std::vector<uint8_t>& buffer,
             continue;
         }
 
-        // Caso 6: byte líder inválido (0xF8-0xFF, nunca válidos en UTF-8) 
+        // Caso 6: byte líder inválido (0xF8-0xFF, nunca válidos en UTF-8)
         errores.push_back({offset, "Byte líder inválido."});
         offset += 1;
     }
 }
 
-// Reporte carácter por carácter 
+
+// Fase 4: Reporte carácter por carácter
 
 void imprimirReporte(const std::vector<CodePointInfo>& codePoints) {
     std::cout << "=== Contenido decodificado ===\n";
@@ -193,8 +217,7 @@ void imprimirErrores(const std::vector<ErrorDecodificacion>& errores) {
     }
 }
 
-// Resumen final con toda la infromacion
-
+// Fase 5: Resumen final 
 void imprimirResumen(size_t bytesTotales,
                       const std::vector<CodePointInfo>& codePoints,
                       const std::vector<ErrorDecodificacion>& errores) {
