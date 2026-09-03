@@ -1,8 +1,5 @@
 // Laboratorio 1 - Decodificador UTF-8
 // Estructura de Datos II
-//
-// Decodifica manualmente UTF-8 byte por byte, sin usar bibliotecas de
-// codificación de texto (ver restricciones sección 3 del enunciado).
 
 #include <iostream>
 #include <fstream>
